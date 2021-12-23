@@ -1,30 +1,52 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 )
 
 type Client interface {
 	Do(r *http.Request) (*http.Response, error)
 }
 
+// type End[In, Out any] interface {
+// 	Request(ctx context.Context, in *In) (*Out, error)
+// }
+
 // TODO: How do I want to handle content-type?
 
-type Endpoint[In, Out comparable] struct {
+type Endpoint[In, Out any] struct {
 	Client
+	ctx     context.Context
 	Path    string
 	Method  string
 	Encoder Encoder[In]
 	Decoder Decoder[Out]
 }
 
-func (e *Endpoint[In, Out]) Request(data *In) (*Out, error) {
+func (e *Endpoint[In, Out]) Test(in any) {
+	switch in.(type) {
+	case *In, In:
+		fmt.Println("Switch In")
+	case *Out, Out:
+		fmt.Println("Switch Out")
+	default:
+		panic(errors.New("invalid input type"))
+	}
+}
+
+func (e *Endpoint[In, Out]) Request(ctx context.Context, data *In) (*Out, error) {
 	in, err := e.Encoder.Encode(*data)
 	if err != nil {
 		return nil, err
 	}
+
+	fmt.Println(reflect.TypeOf(data))
+	fmt.Println(reflect.ValueOf(data))
 
 	r, err := http.NewRequest(e.Method, e.Path, in)
 	if err != nil {

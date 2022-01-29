@@ -3,85 +3,219 @@ package api
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"reflect"
 )
 
-type Client interface {
-	Do(r *http.Request) (*http.Response, error)
+type Method string
+
+const (
+	GET    Method = http.MethodGet
+	POST   Method = http.MethodPost
+	PUT    Method = http.MethodPut
+	DELETE Method = http.MethodDelete
+)
+
+type Endpoint struct {
+	API     API
+	Path    string
+	Method  Method
+	Handler http.HandlerFunc
 }
 
-// type End[In, Out any] interface {
+type Client interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+type Encoder func(interface{}) ([]byte, error)
+type Decoder func([]byte, interface{}) error
+
+type API struct {
+	Client
+	Encoder Encoder
+	Decoder Decoder
+}
+
+var ErrMethodNotAllowed = errors.New("method not allowed")
+
+type H[T any] struct {
+	Value T
+	RW    http.ResponseWriter
+}
+
+type Handler interface {
+	any
+	http.ResponseWriter
+}
+
+func Host[T Handler](ctx context.Context, e *Endpoint) <-chan H[T] {
+	out := make(chan H[T])
+
+	e.Handler = func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			panic(err)
+		}
+		defer r.Body.Close()
+
+		v, err := Decode[T](e.API.Decoder, b)
+		if err != nil {
+			panic(err)
+		}
+
+		h := H[T]{
+			Value: v,
+			RW:    w,
+		}
+
+		out <- h
+	}
+
+	return out
+}
+
+func Query[R any, E error](e Endpoint, body io.Reader) (R, error) {
+	req, err := http.NewRequest(string(e.Method), e.Path, body)
+	if err != nil {
+		return *new(R), err
+	}
+
+	resp, err := e.API.Client.Do(req)
+	if err != nil {
+		return *new(R), err
+	}
+
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return *new(R), err
+	}
+
+	return Decode[R](e.API.Decoder, b)
+}
+
+func Decode[T any](d Decoder, b []byte) (T, error) {
+	value := new(T)
+
+	err := d(b, value)
+	if err != nil {
+		return *new(T), err
+	}
+
+	return *value, nil
+}
+
+// func Get[U, T any](endpoint Endpoint[U, T]) func(http.ResponseWriter, *http.Request) {
+// 	return func(w http.ResponseWriter, r *http.Request) {
+// 		if r.Method != string(endpoint.Method) {
+// 			w.WriteHeader(http.StatusMethodNotAllowed)
+// 			return
+// 		}
+// 		w.WriteHeader(http.StatusOK)
+// 		w.Write([]byte(`{"message": "Hello World"}`))
+// 	}
+// }
+
+// type HttpClient interface {
+// 	Do(r *http.Request) (*http.Response, error)
+// }
+
+// // type End[In, Out any] interface {
+// // 	Request(ctx context.Context, in *In) (*Out, error)
+// // }
+
+// // TODO: How do I want to handle content-type?
+
+// func Client(
+// 	ctx context.Context,
+// 	c HttpClient,
+// 	url *url.URL,
+// ) HttpClient {
+// 	ctx, cancel := context.WithCancel(ctx)
+// 	defer cancel()
+
+// 	return &client{
+// 		c,
+// 		ctx,
+// 		cancel,
+// 	}
+// }
+
+// type client struct {
+// 	HttpClient
+// 	ctx    context.Context
+// 	cancel context.CancelFunc
+// }
+
+// type Encoder[Enc, Dec any] interface {
+// 	ContentType() string
+// 	Encode(t Enc) (io.Reader, error)
+// 	Decode(io.ReadCloser) (*Dec, error)
+// }
+
+// func New[In, Out any](
+// 	ctx context.Context,
+// 	c HttpClient,
+// 	e Encoder[In, Out],
+// 	method, path string,
+// ) Endpoint[In, Out] {
+// 	return &endpoint[In, Out]{c, e, ctx, path, method}
+// }
+
+// type Endpoint[In, Out any] interface {
 // 	Request(ctx context.Context, in *In) (*Out, error)
 // }
 
-// TODO: How do I want to handle content-type?
+// type endpoint[In, Out any] struct {
+// 	c HttpClient
+// 	Encoder[In, Out]
+// 	context.Context
+// 	Path   string
+// 	Method string
+// }
 
-type Endpoint[In, Out any] struct {
-	Client
-	ctx     context.Context
-	Path    string
-	Method  string
-	Encoder Encoder[In]
-	Decoder Decoder[Out]
-}
+// func (e *endpoint[In, Out]) Request(ctx context.Context, data *In) (*Out, error) {
+// 	in, err := e.Encoder.Encode(*data)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-func (e *Endpoint[In, Out]) Test(in any) {
-	switch in.(type) {
-	case *In, In:
-		fmt.Println("Switch In")
-	case *Out, Out:
-		fmt.Println("Switch Out")
-	default:
-		panic(errors.New("invalid input type"))
-	}
-}
+// 	fmt.Println(reflect.TypeOf(data))
+// 	fmt.Println(reflect.ValueOf(data))
 
-func (e *Endpoint[In, Out]) Request(ctx context.Context, data *In) (*Out, error) {
-	in, err := e.Encoder.Encode(*data)
-	if err != nil {
-		return nil, err
-	}
+// 	r, err := http.NewRequestWithContext(ctx, e.Method, e.Path, in)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	fmt.Println(reflect.TypeOf(data))
-	fmt.Println(reflect.ValueOf(data))
+// 	// TODO:? Should this be here?
+// 	r.Header.Set("Content-Type", e.ContentType())
 
-	r, err := http.NewRequest(e.Method, e.Path, in)
-	if err != nil {
-		return nil, err
-	}
+// 	resp, err := e.c.Do(r)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	// TODO: set these up with the proper headers...
-	r.Header.Set("Content-Type", "application/json")
+// 	if resp.StatusCode >= 400 {
+// 		return nil, errors.New(resp.Status)
+// 	}
 
-	resp, err := e.Do(r)
-	if err != nil {
-		return nil, err
-	}
+// 	// TODO: handle other status codes
+// 	out, err := e.Encoder.Decode(resp.Body)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	if resp.StatusCode >= 400 {
-		return nil, errors.New(resp.Status)
-	}
+// 	return out, nil
+// }
 
-	// TODO: handle other status codes
+// type Decoder[Out any] interface {
+// 	Decode(io.ReadCloser) (*Out, error)
+// }
 
-	out, err := e.Decoder.Decode(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	return out, nil
-}
-
-type Decoder[Out any] interface {
-	Decode(io.ReadCloser) (*Out, error)
-}
-
-type Encoder[T any] interface {
-	Encode(t T) (io.Reader, error)
-}
+// type Encoder[T any] interface {
+// 	Encode(t T) (io.Reader, error)
+// }
 
 // type Encoder[In] interface {
 // 	Encode(data *In) io.Reader

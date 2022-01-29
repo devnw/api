@@ -1,15 +1,81 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
-	. "go.devnw.com/api"
+	"github.com/davecgh/go-spew/spew"
+	. "go.atomizer.io/stream"
+	"go.devnw.com/api"
 )
+
+type Test struct {
+	http.ResponseWriter `json:"-"`
+	Name                string `json:"name"`
+	Value               int    `json:"value"`
+}
+
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// var handlers []http.HandlerFunc
+
+	// handlers = append(handlers, Get(Endpoint[string, string]{
+	// 	Method: "GET",
+	// 	Path:   "/",
+	// }))
+
+	e := &api.Endpoint{
+		API: api.API{
+			Client: http.DefaultClient,
+			Encoder: func(interface{}) ([]byte, error) {
+				return nil, errors.New("not implemented")
+			},
+			Decoder: func(b []byte, v interface{}) error {
+				str, ok := v.(*string)
+				if !ok {
+					return fmt.Errorf("expected *string, got %T", v)
+				}
+
+				*str = string(b)
+
+				return nil //errors.New("not implemented")
+			},
+		},
+		Method: "GET",
+		// Path:   "https://benjiv.com",
+		Path: "/",
+	}
+
+	// body, err := Query[string, error](e, nil)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// println(body)
+
+	incomingRequests := make(chan any)
+
+	go Pipe(
+		ctx,
+		Intercept(
+			ctx,
+			api.Host[Test](ctx, e),
+			func(ctx context.Context, value api.H[Test]) (any, bool) {
+				println("intercepted")
+				return value, true
+			}), incomingRequests)
+
+	spew.Dump(e)
+
+	go http.ListenAndServe("127.0.0.1:5000", e.Handler)
+
+	for o := range incomingRequests {
+		spew.Dump(o)
+	}
+}
 
 // type Clt struct {
 // 	c    Client
@@ -45,55 +111,51 @@ import (
 
 // func RE[In, Out any](e End)
 
-type C[U Endpoint[In, Out], In, Out any] map[string]U
+// type C[U Endpoint[In, Out], In, Out any] map[string]U
 
-type fakeclient struct {
-	do func(*http.Request) (*http.Response, error)
-}
+// type fakeclient struct {
+// 	do func(*http.Request) (*http.Response, error)
+// }
 
-func (*fakeclient) Do(*http.Request) (*http.Response, error) {
-	return &http.Response{
-		Status: "200 OK",
-		Body: io.NopCloser(bytes.NewBufferString(`{
-			"id": "1",
-			"name": "test",
-			"description": "test",
-			"created": "2019-01-01T00:00:00Z"
-		}`)),
-	}, nil
-}
+// func (*fakeclient) Do(*http.Request) (*http.Response, error) {
+// 	return &http.Response{
+// 		Status: "200 OK",
+// 		Body: io.NopCloser(bytes.NewBufferString(`{
+// 			"id": "1",
+// 			"name": "test",
+// 			"description": "test",
+// 			"created": "2019-01-01T00:00:00Z"
+// 		}`)),
+// 	}, nil
+// }
 
-type TypeIn struct {
-	Name string `json:"name"`
-}
+// type TypeIn struct {
+// 	Name string `json:"name"`
+// }
 
-type TypeOut struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Desc    string `json:"description"`
-	Created string `json:"created"`
-}
+// type TypeOut struct {
+// 	ID      string `json:"id"`
+// 	Name    string `json:"name"`
+// 	Desc    string `json:"description"`
+// 	Created string `json:"created"`
+// }
 
-type FakeEncoder[T any] struct {
-	data *T
-}
+// type CClient struct {
+// 	client Client
+// }
 
-type CClient struct {
-	client Client
-}
+// func Request[T any](
+// 	e Encoder[T],
+// 	method, url string,
+// 	body *T,
+// ) (*http.Request, error) {
+// 	in, err := e.Encode(*body)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-func Request[T any](
-	e Encoder[T],
-	method, url string,
-	body *T,
-) (*http.Request, error) {
-	in, err := e.Encode(*body)
-	if err != nil {
-		return nil, err
-	}
-
-	return http.NewRequest(method, url, in)
-}
+// 	return http.NewRequest(method, url, in)
+// }
 
 // func (c *CClient) Request(ctx context.Context, endpoint EP, data any) (any, error) {
 
@@ -133,34 +195,36 @@ func Request[T any](
 // 	}
 // }
 
-func (fe *FakeEncoder[T]) Encode(data T) (io.Reader, error) {
-	output, err := json.Marshal(data)
-	if err != nil {
-		return nil, err
-	}
+// type FakeEncoder[Enc, Dec any] struct{}
 
-	return bytes.NewBuffer(output), nil
-}
+// func (fe *FakeEncoder[Enc, Dec]) Encode(data Enc) (io.Reader, error) {
+// 	output, err := json.Marshal(data)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-type FakeDecoder[T any] struct {
-	data *T
-}
+// 	return bytes.NewBuffer(output), nil
+// }
 
-func (fe *FakeDecoder[T]) Decode(body io.ReadCloser) (*T, error) {
-	var out = new(T)
+// func (fe *FakeEncoder[Enc, Dec]) Decode(body io.ReadCloser) (*Dec, error) {
+// 	var out = new(Dec)
 
-	data, err := io.ReadAll(body)
-	if err != nil {
-		return nil, err
-	}
+// 	data, err := io.ReadAll(body)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	err = json.Unmarshal(data, out)
-	if err != nil {
-		return nil, err
-	}
+// 	err = json.Unmarshal(data, out)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	return out, nil
-}
+// 	return out, nil
+// }
+
+// func (fe *FakeEncoder[Enc, Dec]) ContentType() string {
+// 	return "application/json"
+// }
 
 // type vuln interface {
 // 	struct {
@@ -189,125 +253,139 @@ func (fe *FakeDecoder[T]) Decode(body io.ReadCloser) (*T, error) {
 // 	}).Request(ctx, data)
 // }
 
-type Query struct {
-}
+// type Query struct {
+// }
 
-type Vulnerability struct {
-}
+// type Vulnerability struct {
+// }
 
-type Asset struct {
-}
+// type Asset struct {
+// }
 
-func NewClient(c Client) *CC {
-	return &CC{
-		Vulns: Endpoint[Query, Vulnerability]{
-			Client:  c,
-			Path:    "/api/v1/vulnerabilities",
-			Method:  "GET",
-			Encoder: &FakeEncoder[Query]{},
-			Decoder: &FakeDecoder[Vulnerability]{},
-		},
-		Assets: Endpoint[Query, Asset]{
-			Client:  c,
-			Path:    "/api/v1/assets",
-			Method:  "GET",
-			Encoder: &FakeEncoder[Query]{},
-			Decoder: &FakeDecoder[Asset]{},
-		},
-	}
-}
+// type httpClient interface {
+// 	Do(r *http.Request) (*http.Response, error)
+// }
 
-type CC struct {
-	Client
-	Vulns  Endpoint[Query, Vulnerability]
-	Assets Endpoint[Query, Asset]
-}
+// type Requester struct {
+// 	client api.HttpClient
+// 	Vulns  api.Endpoint[Query, Vulnerability]
+// 	Assets api.Endpoint[Query, Asset]
+// }
 
-func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+// func Client(ctx context.Context, h httpClient) *Requester {
+// 	url, err := url.Parse("http://localhost:8080")
+// 	if err != nil {
+// 		panic(err)
+// 	}
 
-	c := NewClient(&fakeclient{})
+// 	r := &Requester{
+// 		client: api.Client(ctx, h, url),
+// 	}
 
-	out, err := c.Vulns.Request(ctx, &Query{})
-	if err != nil {
-		panic(err)
-	}
+// 	r.Vulns = api.New[Query, Vulnerability](
+// 		ctx,
+// 		r.client,
+// 		&FakeEncoder[Query, Vulnerability]{},
+// 		http.MethodGet,
+// 		"/api/v1/vulnerabilities",
+// 	)
 
-	fmt.Println(out)
+// 	r.Assets = api.New[Query, Asset](
+// 		ctx,
+// 		r.client,
+// 		&FakeEncoder[Query, Asset]{},
+// 		http.MethodGet,
+// 		"/api/v1/assets",
+// 	)
 
-	// out, err := Vulns[TypeIn, TypeOut](ctx, &TypeIn{})
-	// if err != nil {
-	// 	panic(err)
-	// }
+// 	return r
+// }
 
-	// fmt.Println(out)
+// func main() {
+// 	ctx, cancel := context.WithCancel(context.Background())
+// 	defer cancel()
 
-	// out, err := Root.Request(ctx, &TypeIn{Name: "test"})
-	// if err != nil {
-	// 	panic(err)
-	// }
+// 	c := Client(ctx, &fakeclient{})
 
-	// ends := C[Endpoint[TypeIn, TypeOut], TypeIn, TypeOut]{
-	// 	"endpoint": Endpoint[TypeIn, TypeOut]{
-	// 		Client: &fakeclient{
-	// 			do: func(*http.Request) (*http.Response, error) {
-	// 				return nil, nil
-	// 			},
-	// 		},
-	// 		Path:    "/",
-	// 		Method:  "GET",
-	// 		Encoder: &FakeEncoder[TypeIn]{},
-	// 		Decoder: &FakeDecoder[TypeOut]{},
-	// 	}}
+// 	out, err := c.Vulns.Request(ctx, &Query{})
+// 	if err != nil {
+// 		panic(err)
+// 	}
 
-	// fmt.Println(out)
+// 	fmt.Println(out)
 
-	// c := &fakeclient{
-	// 	do: func(*http.Request) (*http.Response, error) {
-	// 		return nil, nil
-	// 	},
-	// }
+// 	// out, err := Vulns[TypeIn, TypeOut](ctx, &TypeIn{})
+// 	// if err != nil {
+// 	// 	panic(err)
+// 	// }
 
-	// cc := &CClient{
-	// 	client: c,
-	// }
+// 	// fmt.Println(out)
 
-	// out, err := cc.Request(ctx, TYPES, &TypeIn{})
-	// if err != nil {
-	// 	panic(err)
-	// }
+// 	// out, err := Root.Request(ctx, &TypeIn{Name: "test"})
+// 	// if err != nil {
+// 	// 	panic(err)
+// 	// }
 
-	// v := As[*TypeOut](out)
+// 	// ends := C[Endpoint[TypeIn, TypeOut], TypeIn, TypeOut]{
+// 	// 	"endpoint": Endpoint[TypeIn, TypeOut]{
+// 	// 		Client: &fakeclient{
+// 	// 			do: func(*http.Request) (*http.Response, error) {
+// 	// 				return nil, nil
+// 	// 			},
+// 	// 		},
+// 	// 		Path:    "/",
+// 	// 		Method:  "GET",
+// 	// 		Encoder: &FakeEncoder[TypeIn]{},
+// 	// 		Decoder: &FakeDecoder[TypeOut]{},
+// 	// 	}}
 
-	// e1 := &Endpoint[TypeIn, TypeOut]{
-	// 	Client:  c,
-	// 	Path:    "/",
-	// 	Method:  "GET",
-	// 	Encoder: &FakeEncoder[TypeIn]{},
-	// 	Decoder: &FakeDecoder[TypeOut]{},
-	// }
+// 	// fmt.Println(out)
 
-	// // m["/api/v1/scanners"] = e1
+// 	// c := &fakeclient{
+// 	// 	do: func(*http.Request) (*http.Response, error) {
+// 	// 		return nil, nil
+// 	// 	},
+// 	// }
 
-	// out, err := e1.Request(ctx, &TypeIn{Name: "foo"})
-	// if err != nil {
-	// 	panic(err)
-	// }
+// 	// cc := &CClient{
+// 	// 	client: c,
+// 	// }
 
-	// vals, err := url.ParseQuery("foo=bar&baz=qux")
-	// if err != nil {
-	// 	panic(err)
-	// }
+// 	// out, err := cc.Request(ctx, TYPES, &TypeIn{})
+// 	// if err != nil {
+// 	// 	panic(err)
+// 	// }
 
-	// e1.Test(&TypeIn{Name: "foo"})
-	// e1.Test(TypeIn{Name: "foo"})
+// 	// v := As[*TypeOut](out)
 
-	// e1.Test(TypeOut{Name: "foo"})
+// 	// e1 := &Endpoint[TypeIn, TypeOut]{
+// 	// 	Client:  c,
+// 	// 	Path:    "/",
+// 	// 	Method:  "GET",
+// 	// 	Encoder: &FakeEncoder[TypeIn]{},
+// 	// 	Decoder: &FakeDecoder[TypeOut]{},
+// 	// }
 
-	// e1.Test(&TypeOut{Name: "foo"})
+// 	// // m["/api/v1/scanners"] = e1
 
-	// fmt.Println(vals)
+// 	// out, err := e1.Request(ctx, &TypeIn{Name: "foo"})
+// 	// if err != nil {
+// 	// 	panic(err)
+// 	// }
 
-	// fmt.Println(out)
-}
+// 	// vals, err := url.ParseQuery("foo=bar&baz=qux")
+// 	// if err != nil {
+// 	// 	panic(err)
+// 	// }
+
+// 	// e1.Test(&TypeIn{Name: "foo"})
+// 	// e1.Test(TypeIn{Name: "foo"})
+
+// 	// e1.Test(TypeOut{Name: "foo"})
+
+// 	// e1.Test(&TypeOut{Name: "foo"})
+
+// 	// fmt.Println(vals)
+
+// 	// fmt.Println(out)
+// }

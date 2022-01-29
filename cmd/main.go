@@ -12,9 +12,8 @@ import (
 )
 
 type Test struct {
-	http.ResponseWriter `json:"-"`
-	Name                string `json:"name"`
-	Value               int    `json:"value"`
+	Name  string `json:"name"`
+	Value int    `json:"value"`
 }
 
 func main() {
@@ -27,26 +26,36 @@ func main() {
 	// 	Path:   "/",
 	// }))
 
-	e := &api.Endpoint{
-		API: api.API{
-			Client: http.DefaultClient,
-			Encoder: func(interface{}) ([]byte, error) {
-				return nil, errors.New("not implemented")
-			},
-			Decoder: func(b []byte, v interface{}) error {
-				str, ok := v.(*string)
-				if !ok {
-					return fmt.Errorf("expected *string, got %T", v)
-				}
-
-				*str = string(b)
-
-				return nil //errors.New("not implemented")
-			},
+	a := api.API{
+		Client: http.DefaultClient,
+		Encoder: func(interface{}) ([]byte, error) {
+			return nil, errors.New("not implemented")
 		},
-		Method: "GET",
-		// Path:   "https://benjiv.com",
-		Path: "/",
+		Decoder: func(b []byte, v interface{}) error {
+			str, ok := v.(*string)
+			if !ok {
+				return fmt.Errorf("expected *string, got %T", v)
+			}
+
+			*str = string(b)
+
+			return nil //errors.New("not implemented")
+		},
+	}
+
+	endpoints := []*api.Endpoint{
+		{
+			API:    a,
+			Method: "GET",
+			// Path:   "https://benjiv.com",
+			Path: "/",
+		},
+		{
+			API:    a,
+			Method: "GET",
+			// Path:   "https://benjiv.com",
+			Path: "/test",
+		},
 	}
 
 	// body, err := Query[string, error](e, nil)
@@ -62,15 +71,29 @@ func main() {
 		ctx,
 		Intercept(
 			ctx,
-			api.Host[Test](ctx, e),
-			func(ctx context.Context, value api.H[Test]) (any, bool) {
-				println("intercepted")
+			api.Host[string](ctx, endpoints[0]),
+			func(ctx context.Context, value api.H[string]) (any, bool) {
+				fmt.Println("intercepted")
 				return value, true
 			}), incomingRequests)
 
-	spew.Dump(e)
+	go Pipe(
+		ctx,
+		Intercept(
+			ctx,
+			api.Host[Test](ctx, endpoints[1]),
+			func(ctx context.Context, value api.H[Test]) (any, bool) {
+				fmt.Println("intercepted test endpoint")
+				return value, true
+			}), incomingRequests)
 
-	go http.ListenAndServe("127.0.0.1:5000", e.Handler)
+	for _, e := range endpoints {
+		spew.Dump(e)
+
+		http.Handle(e.Path, e.Handler)
+	}
+
+	go http.ListenAndServe("127.0.0.1:5000", http.DefaultServeMux)
 
 	for o := range incomingRequests {
 		spew.Dump(o)

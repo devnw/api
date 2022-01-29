@@ -48,7 +48,7 @@ type Handler interface {
 	http.ResponseWriter
 }
 
-func Host[T Handler](ctx context.Context, e *Endpoint) <-chan H[T] {
+func Host[T any](ctx context.Context, e *Endpoint) <-chan H[T] {
 	out := make(chan H[T])
 
 	e.Handler = func(w http.ResponseWriter, r *http.Request) {
